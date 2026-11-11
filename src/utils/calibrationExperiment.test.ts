@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runCalibrationExperiment, winProfit } from "./calibrationExperiment";
+import { calibrationPlayList, runCalibrationExperiment, winProfit } from "./calibrationExperiment";
 import type { ResearchPick } from "./accuracyResearch";
 
 const row = (overrides: Partial<ResearchPick> = {}): ResearchPick => ({
@@ -100,6 +100,74 @@ describe("skeptical calibration experiment", () => {
   it("returns null metrics rather than fabricated zeroes when empty", () => {
     const result = runCalibrationExperiment([], "pregame", options);
     expect(result.candidate).toMatchObject({ actual: null, brier: null, calibrationGap: null, qualifiedAccuracy: null });
+  });
+});
+
+describe("65/35 qualifying-play overlap risk", () => {
+  const fixed = { winChanceWeight: 65, l10Weight: 35, cutoff: 0.66 };
+  const play = (overrides: Partial<ResearchPick> = {}): ResearchPick => row({
+    odds: -110, team: "New York Knicks", event_label: "Cleveland Cavaliers @ New York Knicks", ...overrides,
+  });
+
+  it("lists only valid plays clearing the fixed 65/35 cutoff", () => {
+    const rows = calibrationPlayList([
+      play({ id: "yes", win_prob: 0.8, hits_l10: 8 }),
+      play({ id: "no", player_name: "Below", win_prob: 0.5, hits_l10: 5 }),
+      play({ id: "bad-odds", player_name: "No odds", win_prob: 0.9, hits_l10: 9, odds: null }),
+    ], fixed);
+    expect(rows.map(r => r.pick.id)).toEqual(["yes"]);
+    expect(rows[0].blendedProbability).toBeCloseTo(0.8);
+  });
+
+  it("counts every qualifying prop on the same player, including the play itself", () => {
+    const rows = calibrationPlayList([
+      play({ id: "a", stat: "points" }),
+      play({ id: "b", stat: "rebounds" }),
+      play({ id: "c", stat: "assists" }),
+    ], fixed);
+    expect(rows).toHaveLength(3);
+    expect(rows.every(r => r.samePlayerPlays === 3)).toBe(true);
+  });
+
+  it("counts same-team plays without mixing opponents or other slates", () => {
+    const rows = calibrationPlayList([
+      play({ id: "a", player_name: "A" }),
+      play({ id: "b", player_name: "B" }),
+      play({ id: "c", player_name: "C", team: "Cleveland Cavaliers" }),
+      play({ id: "d", player_name: "D", game_date: "2026-11-07" }),
+    ], fixed);
+    expect(rows.find(r => r.pick.id === "a")?.sameTeamPlays).toBe(2);
+    expect(rows.find(r => r.pick.id === "c")?.sameTeamPlays).toBe(1);
+    expect(rows.find(r => r.pick.id === "d")?.sameTeamPlays).toBe(1);
+  });
+
+  it("keeps player overlap independent from team overlap", () => {
+    const rows = calibrationPlayList([
+      play({ id: "a", player_name: "A", stat: "points" }),
+      play({ id: "b", player_name: "A", stat: "rebounds" }),
+      play({ id: "c", player_name: "B", stat: "assists" }),
+    ], fixed);
+    expect(rows.find(r => r.pick.id === "a")).toMatchObject({ samePlayerPlays: 2, sameTeamPlays: 3 });
+    expect(rows.find(r => r.pick.id === "c")).toMatchObject({ samePlayerPlays: 1, sameTeamPlays: 3 });
+  });
+
+  it("marks a missing team unknown rather than inferring it from the matchup", () => {
+    const rows = calibrationPlayList([play({ team: null })], fixed);
+    expect(rows[0].sameTeamPlays).toBeNull();
+    expect(rows[0].samePlayerPlays).toBe(1);
+  });
+
+  it("deduplicates snapshots, sorts newest and strongest first, and preserves input", () => {
+    const input = [
+      play({ id: "old", game_date: "2026-11-07", win_prob: 0.9, hits_l10: 9 }),
+      play({ id: "weak", win_prob: 0.7, hits_l10: 7 }),
+      play({ id: "strong", player_name: "Strong", win_prob: 0.9, hits_l10: 9 }),
+      play({ id: "strong", player_name: "Strong", win_prob: 0.9, hits_l10: 9 }),
+    ];
+    const before = structuredClone(input);
+    const rows = calibrationPlayList(input, fixed);
+    expect(rows.map(r => r.pick.id)).toEqual(["strong", "weak", "old"]);
+    expect(input).toEqual(before);
   });
 });
 

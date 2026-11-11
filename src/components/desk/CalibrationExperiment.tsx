@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { runCalibrationExperiment, slateProfitTrend, type CalibrationMetrics } from "@/utils/calibrationExperiment";
-import type { ResearchPick } from "@/utils/accuracyResearch";
+import { calibrationPlayList, runCalibrationExperiment, slateProfitTrend, type CalibrationMetrics } from "@/utils/calibrationExperiment";
+import { researchLabel, type ResearchPick } from "@/utils/accuracyResearch";
 
 const pct = (value: number | null) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
 const money = (value: number) => `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -29,6 +29,7 @@ export function CalibrationExperiment({ picks, kind }: { picks: ResearchPick[]; 
   const [submitted, setSubmitted] = useState<{ winChanceWeight: number; l10Weight: number; cutoff: number; stake: number; startingBankroll: number } | null>(null);
   const result = useMemo(() => submitted ? runCalibrationExperiment(picks, kind, submitted) : null, [picks, kind, submitted]);
   const trend = useMemo(() => slateProfitTrend(picks, { winChanceWeight: 65, l10Weight: 35, cutoff: 0.66, stake: 10 }), [picks]);
+  const playList = useMemo(() => calibrationPlayList(picks, { winChanceWeight: 65, l10Weight: 35, cutoff: 0.66 }), [picks]);
   const invalidWeights = winWeight + l10Weight <= 0;
 
   return <section aria-label="Win chance and L10 calibration experiment" className="mt-5 border-y border-border py-4">
@@ -50,6 +51,18 @@ export function CalibrationExperiment({ picks, kind }: { picks: ResearchPick[]; 
         </tr>)}</tbody>
       </table></div>
       <p className="mt-1 text-xs text-muted-foreground">Fills in after each midnight update. Practice dollars only.</p>
+    </div>}
+    {playList.length > 0 && <div className="mt-4">
+      <h5 className="text-xs font-semibold">65/35 qualifying plays · ≥66%</h5>
+      <div className="mt-2"><table aria-label="65/35 qualifying plays" className="w-full table-fixed text-xs">
+        <thead className="text-muted-foreground"><tr><th className="w-[46%] py-1 pr-2 text-left">Play</th><th className="w-[36%] p-1 text-left">Risk · overlaps</th><th className="p-1 text-right">Blend</th></tr></thead>
+        <tbody>{playList.map(({ pick, blendedProbability, samePlayerPlays, sameTeamPlays }) => <tr key={pick.id} className="border-t border-border align-top">
+          <td className="py-2 pr-2"><div className="font-medium">{pick.player_name}</div><div className="mt-0.5 capitalize text-muted-foreground">{pick.side} {pick.line} {researchLabel(pick.stat)}</div><div className="mt-1 font-mono text-[10px] uppercase text-muted-foreground">{pick.game_date} · {pick.status}</div></td>
+          <td className="p-1"><span className={samePlayerPlays > 1 || (sameTeamPlays ?? 0) > 2 ? "font-medium text-destructive" : "font-mono"}>{samePlayerPlays} on player<br />{sameTeamPlays == null ? "Team unknown" : `${sameTeamPlays} on team`}</span>{pick.team && <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{pick.team}</div>}</td>
+          <td className="p-1 text-right font-mono">{pct(blendedProbability)}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="mt-1 text-xs text-muted-foreground">Counts include the play itself and only other qualifiers on the same slate. More overlap means more shared risk, not a predicted loss.</p>
     </div>}
     <div className="mt-4 grid gap-4 sm:grid-cols-3">
       <label className="text-xs">Win chance weight <output className="float-right font-mono">{winWeight}%</output>

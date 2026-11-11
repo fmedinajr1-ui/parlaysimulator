@@ -134,6 +134,51 @@ export function runCalibrationExperiment(
   };
 }
 
+export interface CalibrationPlayRow {
+  pick: ResearchPick;
+  blendedProbability: number;
+  /** Qualifying plays on this player/team on the same slate, including this play. */
+  samePlayerPlays: number;
+  sameTeamPlays: number | null;
+}
+
+/** Qualifying plays with same-slate overlap counts; presentation only, never a model change. */
+export function calibrationPlayList(input: ResearchPick[], options: CalibrationOptions): CalibrationPlayRow[] {
+  const rawWin = Number.isFinite(options.winChanceWeight) ? Math.max(0, options.winChanceWeight) : 0;
+  const rawL10 = Number.isFinite(options.l10Weight) ? Math.max(0, options.l10Weight) : 0;
+  const total = rawWin + rawL10;
+  const winWeight = total > 0 ? rawWin / total : 1;
+  const l10Weight = total > 0 ? rawL10 / total : 0;
+  const cutoff = typeof options.cutoff === "number" && Number.isFinite(options.cutoff)
+    ? Math.min(1, Math.max(0, options.cutoff)) : 0.6;
+  const unique = [...new Map(input.map(row => [
+    `${row.game_date}|${row.player_name}|${row.stat}|${row.side}|${row.model_version}`, row,
+  ])).values()];
+  const qualified = unique.filter(pick =>
+    Number.isFinite(pick.win_prob) && pick.win_prob >= 0 && pick.win_prob <= 1 &&
+    Number.isFinite(pick.games_l10) && pick.games_l10 > 0 &&
+    Number.isFinite(pick.hits_l10) && pick.hits_l10 >= 0 && pick.hits_l10 <= pick.games_l10 &&
+    typeof pick.odds === "number" && Number.isFinite(pick.odds) && Math.abs(pick.odds) >= 100
+  ).map(pick => ({
+    pick,
+    blendedProbability: winWeight * pick.win_prob + l10Weight * (pick.hits_l10 / pick.games_l10),
+    samePlayerPlays: 0,
+    sameTeamPlays: null,
+  })).filter(row => row.blendedProbability >= cutoff);
+  const playerCount = (row: CalibrationPlayRow) => qualified.filter(other =>
+    other.pick.game_date === row.pick.game_date &&
+    other.pick.player_name.trim().toLowerCase() === row.pick.player_name.trim().toLowerCase()
+  ).length;
+  const teamCount = (row: CalibrationPlayRow) => {
+    const team = row.pick.team?.trim().toLowerCase();
+    if (!team) return null;
+    return qualified.filter(other => other.pick.game_date === row.pick.game_date && other.pick.team?.trim().toLowerCase() === team).length;
+  };
+  return qualified.map(row => ({ ...row, samePlayerPlays: playerCount(row), sameTeamPlays: teamCount(row) }))
+    .sort((a, b) => b.pick.game_date.localeCompare(a.pick.game_date) ||
+      b.blendedProbability - a.blendedProbability || a.pick.player_name.localeCompare(b.pick.player_name));
+}
+
 export interface SlateTrendRow { game_date: string; bets: number; won: number; lost: number; open: number; staked: number; profit: number; cumulative: number }
 
 /** Per-slate profit for one fixed blend; open picks are counted but never scored. */

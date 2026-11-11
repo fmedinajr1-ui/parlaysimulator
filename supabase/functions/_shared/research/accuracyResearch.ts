@@ -2,6 +2,7 @@ export interface ResearchPick {
   id: string; game_date: string; player_name: string; stat: string; side: string; line: number;
   win_prob: number; hits_l10: number; games_l10: number; warnings: string[];
   status: string; result_value: number | null; model_version: string; odds?: number | null;
+  team?: string | null; event_label?: string | null;
 }
 export const researchLabel = (stat: string) => stat === "pra" ? "Points + rebounds + assists" : stat === "threes_made" ? "Threes" : stat.charAt(0).toUpperCase() + stat.slice(1);
 

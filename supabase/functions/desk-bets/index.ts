@@ -130,7 +130,10 @@ Deno.serve(async (req) => {
       .eq("model_version", b.model_version).order("game_date", { ascending: false }).order("rank").limit(10000);
     const { data: reviews, error: reviewError } = await sb.from("research_skeptical_reviews").select("*")
       .eq("model_version", b.model_version).order("game_date", { ascending: false }).order("rank").limit(10000);
-    return error || reviewError ? json({ error: error?.message ?? reviewError?.message }, 500) : json({ picks: data, reviews });
+    const { data: roster } = await sb.from("research_player_teams").select("player_name,team").limit(5000);
+    const teams = new Map<string, string>((roster ?? []).map((r: any) => [r.player_name.toLowerCase(), r.team]));
+    const withTeams = (rows: any[] | null) => (rows ?? []).map(row => ({ ...row, team: teams.get(row.player_name.toLowerCase()) ?? null }));
+    return error || reviewError ? json({ error: error?.message ?? reviewError?.message }, 500) : json({ picks: withTeams(data), reviews: withTeams(reviews) });
   }
   if (b.action === "log_skeptical_review") {
     const validated = Body.safeParse({ ...b, action: "log_skeptical_picks" });
