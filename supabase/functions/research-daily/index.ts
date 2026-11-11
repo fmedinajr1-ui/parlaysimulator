@@ -235,6 +235,15 @@ Deno.serve(async (req) => {
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
+  if (only === "desk") {
+    // Re-snapshot today's pregame desk pool only (e.g. after a data fix, before tip-off).
+    await step("deskBots", async () => {
+      const board = await getJson(`${ESPN}/scoreboard?dates=${today.replaceAll("-", "")}`);
+      return snapshotDeskBots(sb, today, board.events ?? []);
+    });
+    await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
+    return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
+  }
   if (only === "rosters") {
     await step("rosters", () => syncRosters(sb));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
