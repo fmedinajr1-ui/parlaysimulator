@@ -21,7 +21,7 @@ async function fetchAll(): Promise<GameLog[]> {
     const { data, error } = await supabase
       .from("nba_player_game_logs")
       .select(COLS)
-      .order("game_date", { ascending: false })
+      .order("game_date", { ascending: false }).order("player_name").order("id")
       .range(from, from + 999);
     if (error) throw error;
     out.push(...((data ?? []) as GameLog[]));

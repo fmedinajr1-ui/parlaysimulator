@@ -17,7 +17,7 @@ export async function snapshotDeskBots(sb: any, today: string, events: any[]) {
   const byPlayer = new Map<string,GameLog[]>();
   for (let from=0; from<60000; from+=1000) {
     const {data, error} = await sb.from("nba_player_game_logs").select("player_name,game_date,opponent,minutes_played,points,rebounds,assists,threes_made,is_home,field_goals_attempted,threes_attempted,plus_minus")
-      .order("game_date",{ascending:false}).range(from,from+999);
+      .order("game_date",{ascending:false}).order("player_name").order("id").range(from,from+999);
     if (error) throw error;
     for (const g of data ?? []) { const name = resolve(g.player_name); if (!name) continue; byPlayer.set(name,[...(byPlayer.get(name) ?? []), {...g,player_name:name}]); }
     if (!data || data.length<1000) break;

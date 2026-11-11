@@ -33,7 +33,7 @@ async function fetchAllLogs(): Promise<GameLog[]> {
     const { data, error } = await supabase
       .from("nba_player_game_logs")
       .select(COLS)
-      .order("game_date", { ascending: false })
+      .order("game_date", { ascending: false }).order("player_name").order("id")
       .range(from, from + 999);
     if (error) throw error;
     out.push(...((data ?? []) as GameLog[]));
@@ -245,7 +245,7 @@ export function useResearchData() {
         for (let from = 0; from < 20000; from += 1000) {
           const { data, error } = await supabase.from("research_prop_lines" as never)
             .select("player_name,stat,line,book,event_label,over_price,under_price,game_date")
-            .gte("game_date", since).lt("game_date", today).range(from, from + 999);
+            .gte("game_date", since).lt("game_date", today).order("id").range(from, from + 999);
           if (error) throw error;
           rows.push(...((data ?? []) as never[]));
           if (!data || data.length < 1000) break;

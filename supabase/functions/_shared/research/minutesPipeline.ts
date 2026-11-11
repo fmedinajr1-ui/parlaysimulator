@@ -79,7 +79,7 @@ export async function snapshotMinutes(sb: any, today: string, fetchJson: (url: s
   const logs: ForecastInput["logs"] = [];
   for (let from = 0; from < 40000; from += 1000) {
     const { data, error } = await sb.from("nba_player_game_logs").select("player_name,game_date,minutes_played")
-      .gte("game_date", since).lt("game_date", today).order("game_date", { ascending: false }).range(from, from + 999);
+      .gte("game_date", since).lt("game_date", today).order("game_date", { ascending: false }).order("player_name").order("id").range(from, from + 999);
     if (error) throw error;
     logs.push(...(data ?? []));
     if (!data || data.length < 1000) break;
