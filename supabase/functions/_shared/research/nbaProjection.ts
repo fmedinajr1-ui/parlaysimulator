@@ -8,7 +8,7 @@ import type { ProductionContext } from "./projectionContext.ts";
 export const TEAM_TOTAL: Record<StatKey, number> = { points: 115, rebounds: 44, assists: 26, threes_made: 13, pra: 185 };
 
 /** Bump whenever the projection rules change, so the pick log can compare versions. */
-export const MODEL_VERSION = "v5-rest-aware";
+export const MODEL_VERSION = "v5-calibrated";
 
 export interface ProjectionContext {
   seasonStart: string;

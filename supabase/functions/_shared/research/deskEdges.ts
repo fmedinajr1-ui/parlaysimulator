@@ -1,6 +1,7 @@
 import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type Reason } from "./nbaProjection.ts";
 import { restProfile, type RestProfile } from "./restProfile.ts";
 import { opponentAllowances, productionContext, type ProductionContext } from "./projectionContext.ts";
+import { calibrationVeto } from "./calibratedFilters.ts";
 import { summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from "./math.ts";
 const STAT_OPTIONS = ["points", "rebounds", "assists", "threes_made", "pra"].map(key => ({key: key as StatKey}));
 export interface EdgePick {
@@ -104,10 +105,11 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
         production,
       });
       if (!p) continue;
-      const qualifies = p.ev >= 0.03 && p.prob >= 0.55 && passesMarginGate(key, p.projection, line);
-      if (!qualifies && !i.all) continue;
       const s = summarizePlayer(games, key, line);
       if (!s) continue;
+      const veto = calibrationVeto({ player: name, stat: key, side: p.side, trend: s.trend, hitRate: p.prob, ev: p.ev });
+      const qualifies = !veto && p.ev >= 0.03 && p.prob >= 0.55 && passesMarginGate(key, p.projection, line);
+      if (!qualifies && !i.all) continue;
       out.push({
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,
         side: p.side, hitRate: p.prob, ev: p.ev, odds: p.odds, notes: p.notes, reasons: p.reasons, trend: s.trend,
@@ -119,7 +121,11 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       });
     }
   }
-  return out.sort((a, b) => b.ev - a.ev).slice(0, i.limit ?? 4);
+  out.sort((a, b) => b.ev - a.ev);
+  // One qualifying prop per player: stacked legs on one player lose together.
+  const seen = new Set<string>();
+  for (const e of out) if (e.qualifies) { if (seen.has(e.player)) e.qualifies = false; else seen.add(e.player); }
+  return (i.all ? out : out.filter((e) => e.qualifies)).slice(0, i.limit ?? 4);
 }
 
 const norm = (n: string) => n.toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, "").replace(/[^a-z ]/g, "").trim();
