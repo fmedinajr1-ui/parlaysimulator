@@ -2,7 +2,7 @@ import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type 
 import { restProfile, type RestProfile } from "./restProfile.ts";
 import { opponentAllowances, productionContext, type ProductionContext } from "./projectionContext.ts";
 import { calibrationVeto } from "./calibratedFilters.ts";
-import { summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from "./math.ts";
+import { statValue, summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from "./math.ts";
 const STAT_OPTIONS = ["points", "rebounds", "assists", "threes_made", "pra"].map(key => ({key: key as StatKey}));
 export interface EdgePick {
   player: string;
@@ -107,8 +107,14 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       if (!p) continue;
       const s = summarizePlayer(games, key, line);
       if (!s) continue;
-      const veto = calibrationVeto({ player: name, stat: key, side: p.side, trend: s.trend, hitRate: p.prob, ev: p.ev });
-      const qualifies = !veto && p.ev >= 0.03 && p.prob >= 0.55 && passesMarginGate(key, p.projection, line);
+      const played = games.filter((g) => Number(g.minutes_played) > 0).sort((a, b) => b.game_date.localeCompare(a.game_date));
+      const l3 = played.slice(0, 3);
+      const avg = (f: (g: GameLog) => number) => l3.length ? l3.reduce((t, g) => t + f(g), 0) / l3.length : 0;
+      const veto = calibrationVeto({ player: name, stat: key, side: p.side, trend: s.trend, hitRate: p.prob, ev: p.ev,
+        line, projection: p.projection, last5: played.slice(0, 5).map((g) => statValue(g, key)),
+        minutesL3: l3.length ? avg((g) => Number(g.minutes_played)) : undefined,
+        fgaL3: avg((g) => Number(g.field_goals_attempted) || 0) });
+      const qualifies = !veto && p.ev >= 0.03 && passesMarginGate(key, p.projection, line);
       if (!qualifies && !i.all) continue;
       out.push({
         player: name, stat: key, line, median: p.projection, edge: Math.round((p.projection - line) * 10) / 10,

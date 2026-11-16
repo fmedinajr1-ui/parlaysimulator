@@ -161,8 +161,11 @@ async function gradePickLog(sb: any, today: string) {
     const { data: g } = await sb.from("nba_player_game_logs").select("minutes_played,points,rebounds,assists,threes_made")
       .ilike("player_name", b.player_name).eq("game_date", b.game_date).maybeSingle();
     if (!g) {
-      // No box score 3+ days later = didn't play.
-      if (b.game_date < etDateKeyDaysAgo(3, new Date())) { await sb.from("research_pick_log").update({ status: "void", settled_at: new Date().toISOString() }).eq("id", b.id); graded++; }
+      // Teammates have a final box score vs this opponent = game over, player didn't play -> void tonight.
+      const { count } = b.opponent ? await sb.from("nba_player_game_logs").select("id", { count: "exact", head: true })
+        .eq("game_date", b.game_date).eq("opponent", b.opponent) : { count: 0 };
+      // Otherwise no box score 3+ days later = didn't play.
+      if ((count ?? 0) > 0 || b.game_date < etDateKeyDaysAgo(3, new Date())) { await sb.from("research_pick_log").update({ status: "void", settled_at: new Date().toISOString() }).eq("id", b.id); graded++; }
       else waiting++;
       continue;
     }

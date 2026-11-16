@@ -23,3 +23,27 @@ exports[`SweetSpot Parlay Builder - Ranked Recommendation Packs > produces deter
   "Unknown Rookie",
 ]
 `;
+
+exports[`SweetSpot Parlay Builder - Ranked Recommendation Packs produces deterministic 2-, 3-, and 4-leg packs for aggressive funnel 1`] = `
+[
+  "Luguentz Dort",
+  "Ja Morant",
+]
+`;
+
+exports[`SweetSpot Parlay Builder - Ranked Recommendation Packs produces deterministic 2-, 3-, and 4-leg packs for aggressive funnel 2`] = `
+[
+  "Luguentz Dort",
+  "Ja Morant",
+  "Dorian Finney-Smith",
+]
+`;
+
+exports[`SweetSpot Parlay Builder - Ranked Recommendation Packs produces deterministic 2-, 3-, and 4-leg packs for aggressive funnel 3`] = `
+[
+  "Luguentz Dort",
+  "Ja Morant",
+  "Dorian Finney-Smith",
+  "Unknown Rookie",
+]
+`;
