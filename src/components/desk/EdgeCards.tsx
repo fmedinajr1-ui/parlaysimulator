@@ -40,7 +40,7 @@ export function EdgeCards({ edges, onPick, skeptical = false, showSlip = true }:
           >
             <div className={`mb-3 flex items-center gap-1.5 border-b border-border pb-2 font-mono text-[10px] font-semibold ${skeptical ? "text-destructive" : "text-primary"}`}>
               {skeptical ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
-              {skeptical ? "SKEPTICAL · DATA CONFLICT" : "NO REVIEW FLAGS"}
+              {skeptical ? "SKEPTICAL" : "PASSED STRESS TEST"}
             </div>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -106,7 +106,9 @@ export function EdgeCards({ edges, onPick, skeptical = false, showSlip = true }:
               );
             })()}
             {e.reasons.length > 0 && (
-              <ul className="mt-2 space-y-1.5">
+              <details className="mt-2">
+              <summary className="desk-mono cursor-pointer text-[11px] text-[hsl(var(--desk-muted))]">Why · {e.reasons.length} factor{e.reasons.length > 1 ? "s" : ""}</summary>
+              <ul className="mt-1.5 space-y-1.5">
                 {e.reasons.map((r) => (
                   <li key={r.label} className="text-[11px] leading-snug text-[hsl(var(--desk-muted))]">
                     <span className="desk-chip desk-mono mr-1.5 text-[10px]">
@@ -116,6 +118,7 @@ export function EdgeCards({ edges, onPick, skeptical = false, showSlip = true }:
                   </li>
                 ))}
               </ul>
+              </details>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="outline" size="sm" className="rounded-md" onClick={() => onPick(e.player)}><Search /> Review</Button>

@@ -14,7 +14,16 @@ export interface FilterInput {
   last5?: number[];
   /** Averages over the last 3 played games (Over volume gate). */
   minutesL3?: number; fgaL3?: number;
+  /** Stress test: rotation teammates (28+ min) ruled out tonight. */
+  keyMatesOut?: number;
+  /** Stress test: this stat in earlier games vs tonight's opponent this season. */
+  vsOpponent?: number[];
+  /** Stress test: minutes in the most recent played game. */
+  lastMinutes?: number;
 }
+
+export const KEY_MATE_MINUTES = 28;
+export const OVER_MIN_LAST_MINUTES = 26;
 
 /** Below this win chance plays went 2-6 (main) and 18-26 (shelf). */
 export const MIN_WIN = 0.65;
@@ -46,6 +55,14 @@ export function calibrationVeto(p: FilterInput): string | null {
     const volume = p.minutesL3 >= OVER_MIN_MINUTES || (scoring && (p.fgaL3 ?? 0) >= OVER_MIN_FGA);
     if (!volume) return "Low-volume role for an Over (under 28 min and under 10 shots lately).";
   }
+  if (p.side === "under" && (p.keyMatesOut ?? 0) >= 2)
+    return "Role alert: 2+ key teammates out — usage goes up, Under is risky.";
+  if (p.line != null && p.vsOpponent?.length) {
+    const failed = p.vsOpponent.some((v) => (p.side === "under" ? v > p.line! : v < p.line!));
+    if (failed) return "Matchup alert: already lost this side against tonight's opponent.";
+  }
+  if (p.side === "over" && p.lastMinutes != null && p.lastMinutes < OVER_MIN_LAST_MINUTES)
+    return "Minutes alert: played under 26 minutes last game — Over is risky.";
   if (p.stat === "threes_made" && (p.hitRate < THREES_MIN_WIN || p.ev < THREES_MIN_EV))
     return "Threes are high-variance; needs 65%+ win chance and 8%+ edge.";
   return null;
