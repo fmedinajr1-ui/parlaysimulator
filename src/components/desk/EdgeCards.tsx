@@ -90,7 +90,7 @@ export function EdgeCards({ edges, onPick, skeptical = false, showSlip = true }:
               </span>
               <span
                 className={`desk-mono text-[11px] font-semibold ${
-                  e.edge > 0 ? "text-[hsl(var(--desk-win))]" : "text-[hsl(var(--desk-loss))]"
+                  e.ev > 0 ? "text-[hsl(var(--desk-win))]" : "text-[hsl(var(--desk-loss))]"
                 }`}
               >
                 PROFIT {e.ev > 0 ? "+" : ""}{Math.round(e.ev * 100)}¢/$1
