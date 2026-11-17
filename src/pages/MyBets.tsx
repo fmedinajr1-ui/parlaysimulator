@@ -9,6 +9,7 @@ import { PASS_KEY } from "@/components/AdminGate";
 import { betPnl, summarize, winProfit, type BetStatus, type PaperBet, type Side } from "@/utils/paperBets";
 import { legKey, parlayOdds, parlayStatus, readSlip, SLIP_EVENT, toggleLeg, writeSlip, type SlipLeg } from "@/utils/betSlip";
 import { statValue, type StatKey } from "@/utils/nbaBoxScoreMath";
+import { MonteCarloSlipAudit } from "@/components/desk/MonteCarloSlipAudit";
 import { hedgePlan, isDanger, liveLegProb, livePredictionAvailable, parlayCashProb } from "@/utils/liveHedge";
 
 const fmt = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
@@ -190,7 +191,8 @@ export default function MyBets() {
                         </div>
                         <button aria-label="Remove pick" className="desk-mono px-2 text-[hsl(var(--desk-muted))]" onClick={() => toggleLeg(l)}>✕</button>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      {parlay && <MonteCarloSlipAudit legs={slip} />}
+                <div className="grid grid-cols-2 gap-2">
                         <label className="desk-label">Line
                           <input inputMode="decimal" defaultValue={l.line} onBlur={(e) => updateLeg(i, { line: Number(e.target.value) || l.line })}
                             className="mt-1 w-full rounded-md border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg))] px-2 py-1.5 text-sm" />

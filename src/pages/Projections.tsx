@@ -119,7 +119,7 @@ export default function Projections() {
                   <span className="desk-mono text-xs">
                     Lean <b>{e.side.toUpperCase()}</b> {fmtOdds(e.odds)} · win {Math.round(e.hitRate * 100)}% · {e.ev >= 0 ? "+" : ""}{Math.round(e.ev * 100)}¢/$1
                   </span>
-                  <button disabled={trial} className="desk-btn shrink-0 text-xs" onClick={() => toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight })}>
+                  <button disabled={trial} className="desk-btn shrink-0 text-xs" onClick={() => toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight, winProb: e.hitRate, team: e.team })}>
                     {inSlip ? "✓ In slip" : "+ Slip"}
                   </button>
                 </div>

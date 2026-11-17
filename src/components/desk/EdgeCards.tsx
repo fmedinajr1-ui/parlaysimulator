@@ -123,7 +123,7 @@ export function EdgeCards({ edges, onPick, skeptical = false, showSlip = true }:
             <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="outline" size="sm" className="rounded-md" onClick={() => onPick(e.player)}><Search /> Review</Button>
             <Button variant={picked ? "default" : "secondary"} size="sm" className="flex-1 rounded-md"
-              onClick={(ev) => { ev.stopPropagation(); toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight }); }}
+              onClick={(ev) => { ev.stopPropagation(); toggleLeg({ player: e.player, stat: e.stat, side: e.side, line: e.line, odds: e.odds, opp: e.tonight, winProb: e.hitRate, team: e.team }); }}
             >
               {picked ? <Check /> : <Plus />}{picked ? "In slip" : "Add to slip"}
             </Button>

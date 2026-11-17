@@ -1,7 +1,7 @@
 import type { StatKey } from "./nbaBoxScoreMath";
 import type { BetStatus, Side } from "./paperBets";
 
-export interface SlipLeg { player: string; stat: StatKey; side: Side; line: number; odds: number; opp?: string | null }
+export interface SlipLeg { player: string; stat: StatKey; side: Side; line: number; odds: number; opp?: string | null; winProb?: number | null; team?: string | null }
 
 export const legKey = (l: Pick<SlipLeg, "player" | "stat">) => `${l.player.toLowerCase()}|${l.stat}`;
 
