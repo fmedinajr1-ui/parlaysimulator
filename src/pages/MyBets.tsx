@@ -191,8 +191,7 @@ export default function MyBets() {
                         </div>
                         <button aria-label="Remove pick" className="desk-mono px-2 text-[hsl(var(--desk-muted))]" onClick={() => toggleLeg(l)}>✕</button>
                       </div>
-                      {parlay && <MonteCarloSlipAudit legs={slip} />}
-                <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <label className="desk-label">Line
                           <input inputMode="decimal" defaultValue={l.line} onBlur={(e) => updateLeg(i, { line: Number(e.target.value) || l.line })}
                             className="mt-1 w-full rounded-md border border-[hsl(var(--desk-line))] bg-[hsl(var(--desk-bg))] px-2 py-1.5 text-sm" />
@@ -211,6 +210,7 @@ export default function MyBets() {
                     <button className="desk-tab flex-1" data-active={!asParlay} onClick={() => setAsParlay(false)}>{slip.length} singles</button>
                   </div>
                 )}
+                {parlay && <MonteCarloSlipAudit legs={slip} />}
                 <div className="grid grid-cols-2 gap-2">
                   <input inputMode="decimal" placeholder={parlay || slip.length === 1 ? "Stake $" : "Stake $ each"} value={stake}
                     onChange={(e) => setStake(e.target.value.replace(/[^\d.]/g, ""))}
