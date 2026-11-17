@@ -1,7 +1,7 @@
 import { projectProp, passesMarginGate, opponentFactors, type MissingMate, type Reason } from "./nbaProjection.ts";
 import { restProfile, type RestProfile } from "./restProfile.ts";
 import { opponentAllowances, productionContext, type ProductionContext } from "./projectionContext.ts";
-import { calibrationVeto, KEY_MATE_MINUTES } from "./calibratedFilters.ts";
+import { calibrationVeto, stressNotes, KEY_MATE_MINUTES } from "./calibratedFilters.ts";
 import { statValue, summarizePlayer, type GameLog, type PlayerSummary, type StatKey } from "./math.ts";
 const STAT_OPTIONS = ["points", "rebounds", "assists", "threes_made", "pra"].map(key => ({key: key as StatKey}));
 export interface EdgePick {
@@ -110,13 +110,19 @@ export function computeEdges(i: EdgeInputs): EdgePick[] {
       const played = games.filter((g) => Number(g.minutes_played) > 0).sort((a, b) => b.game_date.localeCompare(a.game_date));
       const l3 = played.slice(0, 3);
       const avg = (f: (g: GameLog) => number) => l3.length ? l3.reduce((t, g) => t + f(g), 0) / l3.length : 0;
-      const veto = calibrationVeto({ player: name, stat: key, side: p.side, trend: s.trend, hitRate: p.prob, ev: p.ev,
+      const season = played.filter((g) => g.game_date >= seasonStart);
+      const sAvg = (f: (g: GameLog) => number) => season.length ? season.reduce((t, g) => t + f(g), 0) / season.length : undefined;
+      const fi = { player: name, stat: key, side: p.side, trend: s.trend, hitRate: p.prob, ev: p.ev,
         line, projection: p.projection, last5: played.slice(0, 5).map((g) => statValue(g, key)),
         minutesL3: l3.length ? avg((g) => Number(g.minutes_played)) : undefined,
         fgaL3: avg((g) => Number(g.field_goals_attempted) || 0),
         keyMatesOut: matesOut.filter((m) => m.minutes >= KEY_MATE_MINUTES).length,
         vsOpponent: oppName ? played.filter((g) => g.game_date >= seasonStart && g.opponent === oppName).map((g) => statValue(g, key)) : [],
-        lastMinutes: played[0] ? Number(played[0].minutes_played) : undefined });
+        lastMinutes: played[0] ? Number(played[0].minutes_played) : undefined,
+        seasonPoints: sAvg((g) => statValue(g, "points")),
+        seasonMinutes: season.length >= 5 ? sAvg((g) => Number(g.minutes_played)) : undefined };
+      const veto = calibrationVeto(fi);
+      for (const why of stressNotes(fi)) p.reasons.push({ label: why.split(":")[0], why, pct: 0 });
       const qualifies = !veto && p.ev >= 0.03 && passesMarginGate(key, p.projection, line);
       if (!qualifies && !i.all) continue;
       out.push({

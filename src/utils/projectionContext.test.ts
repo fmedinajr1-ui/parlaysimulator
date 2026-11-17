@@ -60,7 +60,7 @@ describe("shot attempts and plus-minus context", () => {
     const ctx = { today, seasonStart: "2026-10-01", home: null, oppFactor: 1, teammatesOut: [] };
     const p = productionContext(games, today);
     expect(projectProp(games, "points", 20, -110, -110, { ...ctx, production: p })).toEqual(projectProp(games, "points", 20, -110, -110, ctx));
-    expect(MODEL_VERSION).toBe("v5-stresstest");
+    expect(MODEL_VERSION).toBe("v5-coach");
     expect(projectProp(games, "points", 20, -110, -110, { ...ctx, production: p, projectedMinutesModel: true })?.projection).toBeGreaterThan(20);
   });
   it("never adjusts production directly for plus-minus", () => {

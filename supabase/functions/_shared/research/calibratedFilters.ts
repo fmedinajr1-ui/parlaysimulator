@@ -20,7 +20,15 @@ export interface FilterInput {
   vsOpponent?: number[];
   /** Stress test: minutes in the most recent played game. */
   lastMinutes?: number;
+  /** Coach roles: season averages (points per game, minutes per game). */
+  seasonPoints?: number; seasonMinutes?: number;
 }
+
+/** Season scoring average that marks a franchise scorer (never fade low points lines). */
+export const STAR_PPG = 25;
+export const STAR_UNDER_MAX_LINE = 24.5;
+/** Season minutes below this mark a rotation/bench role (no Overs off short hot streaks). */
+export const BENCH_MINUTES = 22;
 
 export const KEY_MATE_MINUTES = 28;
 export const OVER_MIN_LAST_MINUTES = 26;
@@ -57,15 +65,23 @@ export function calibrationVeto(p: FilterInput): string | null {
   }
   if (p.side === "under" && (p.keyMatesOut ?? 0) >= 2)
     return "Role alert: 2+ key teammates out — usage goes up, Under is risky.";
-  if (p.line != null && p.vsOpponent?.length) {
-    const failed = p.vsOpponent.some((v) => (p.side === "under" ? v > p.line! : v < p.line!));
-    if (failed) return "Matchup alert: already lost this side against tonight's opponent.";
-  }
-  if (p.side === "over" && p.lastMinutes != null && p.lastMinutes < OVER_MIN_LAST_MINUTES)
-    return "Minutes alert: played under 26 minutes last game — Over is risky.";
+  if (p.side === "under" && p.stat === "points" && (p.seasonPoints ?? 0) >= STAR_PPG && p.line != null && p.line < STAR_UNDER_MAX_LINE)
+    return "Star scorer: never fade a 25+ PPG player's points on a line under 24.5.";
+  if (p.side === "over" && p.seasonMinutes != null && p.seasonMinutes < BENCH_MINUTES)
+    return "Bench role: under 22 minutes a night this season — coach's leash is too short for an Over.";
   if (p.stat === "threes_made" && (p.hitRate < THREES_MIN_WIN || p.ev < THREES_MIN_EV))
     return "Threes are high-variance; needs 65%+ win chance and 8%+ edge.";
   return null;
+}
+
+/** Stress-test cautions shown on the card; they never block a pick. */
+export function stressNotes(p: FilterInput): string[] {
+  const notes: string[] = [];
+  if (p.line != null && p.vsOpponent?.length && p.vsOpponent.some((v) => (p.side === "under" ? v > p.line! : v < p.line!)))
+    notes.push("Matchup alert: this side missed once already against tonight's opponent.");
+  if (p.side === "over" && p.lastMinutes != null && p.lastMinutes < OVER_MIN_LAST_MINUTES)
+    notes.push("Minutes alert: played under 26 minutes last game.");
+  return notes;
 }
 
 /** Keeps only the best (first, list must be sorted best-first) qualifying prop per player. */
