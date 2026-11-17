@@ -154,6 +154,22 @@ async function gradeRealBets(sb: any, today: string) {
 }
 
 /** Grades yesterday's (and older) logged desk picks against box scores, same rules as real bets. */
+/** Grades saved Monte Carlo records from box scores (same rules as picks). */
+async function gradeSimLog(sb: any, today: string) {
+  const { data: open, error } = await sb.from("research_sim_log").select("id,game_date,player_name,stat,side,line").eq("status", "open").lt("game_date", today).limit(3000);
+  if (error) throw error;
+  let graded = 0;
+  for (const b of open ?? []) {
+    const { data: g } = await sb.from("nba_player_game_logs").select("minutes_played,points,rebounds,assists,threes_made")
+      .ilike("player_name", b.player_name).eq("game_date", b.game_date).maybeSingle();
+    if (!g) { if (b.game_date < etDateKeyDaysAgo(3, new Date())) { await sb.from("research_sim_log").update({ status: "void" }).eq("id", b.id); graded++; } continue; }
+    const { status, result_value } = gradeResearchPick(b, g);
+    await sb.from("research_sim_log").update({ status, result_value, settled_at: new Date().toISOString() }).eq("id", b.id);
+    graded++;
+  }
+  return { graded };
+}
+
 async function gradePickLog(sb: any, today: string) {
   const { data: open } = await sb.from("research_pick_log").select("*").eq("status", "open").lt("game_date", today).limit(2000);
   let graded = 0, waiting = 0;
@@ -229,6 +245,7 @@ Deno.serve(async (req) => {
     await step("gradeBotPicks", () => gradeBotPicks(sb, today));
     await step("gradeSkepticalPicks", () => gradeSkepticalPicks(sb, today));
     await step("gradeMinutes", () => gradeMinutes(sb, today));
+    await step("gradeSimLog", () => gradeSimLog(sb, today));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
@@ -260,6 +277,7 @@ Deno.serve(async (req) => {
   await step("gradeBotPicks", () => gradeBotPicks(sb, today));
   await step("gradeSkepticalPicks", () => gradeSkepticalPicks(sb, today));
   await step("gradeMinutes", () => gradeMinutes(sb, today));
+  await step("gradeSimLog", () => gradeSimLog(sb, today));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
   await step("minutesForecasts", () => snapshotMinutes(sb, today));

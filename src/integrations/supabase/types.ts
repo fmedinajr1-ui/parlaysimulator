@@ -15194,6 +15194,75 @@ export type Database = {
           },
         ]
       }
+      research_sim_log: {
+        Row: {
+          created_at: string
+          game_date: string
+          id: string
+          line: number
+          model_version: string
+          model_win_prob: number | null
+          odds: number | null
+          player_name: string
+          projection: number | null
+          qualifies: boolean
+          result_value: number | null
+          settled_at: string | null
+          side: string
+          sim_p10: number | null
+          sim_p50: number | null
+          sim_p90: number | null
+          sim_side_prob: number
+          sim_version: string
+          stat: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          game_date: string
+          id?: string
+          line: number
+          model_version: string
+          model_win_prob?: number | null
+          odds?: number | null
+          player_name: string
+          projection?: number | null
+          qualifies?: boolean
+          result_value?: number | null
+          settled_at?: string | null
+          side: string
+          sim_p10?: number | null
+          sim_p50?: number | null
+          sim_p90?: number | null
+          sim_side_prob: number
+          sim_version: string
+          stat: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          game_date?: string
+          id?: string
+          line?: number
+          model_version?: string
+          model_win_prob?: number | null
+          odds?: number | null
+          player_name?: string
+          projection?: number | null
+          qualifies?: boolean
+          result_value?: number | null
+          settled_at?: string | null
+          side?: string
+          sim_p10?: number | null
+          sim_p50?: number | null
+          sim_p90?: number | null
+          sim_side_prob?: number
+          sim_version?: string
+          stat?: string
+          status?: string
+        }
+        Relationships: []
+      }
       research_skeptical_picks: {
         Row: {
           event_label: string

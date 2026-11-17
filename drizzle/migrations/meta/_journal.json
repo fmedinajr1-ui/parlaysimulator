@@ -78,6 +78,13 @@
       "when": 1794198935555,
       "tag": "0010_skeptical_retrospective_review",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794923766583,
+      "tag": "0011_migration",
+      "breakpoints": true
     }
   ]
 }
