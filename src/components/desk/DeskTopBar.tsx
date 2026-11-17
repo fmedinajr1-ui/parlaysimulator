@@ -49,6 +49,7 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
         <nav className="flex items-center gap-1">
           <Button asChild variant={location.pathname === "/" ? "secondary" : "ghost"} size="sm" className="rounded-md px-3"><Link to="/">Desk</Link></Button>
           <Button asChild variant={location.pathname === "/projections" ? "secondary" : "ghost"} size="sm" className="rounded-md px-3"><Link to="/projections">Projections</Link></Button>
+          <Button asChild variant={location.pathname === "/games" ? "secondary" : "ghost"} size="sm" className="rounded-md px-3"><Link to="/games">Games</Link></Button>
           <Button asChild variant="outline" size="sm" className="rounded-md px-3"><Link to="/bets">My bets</Link></Button>
         </nav>
       </div>

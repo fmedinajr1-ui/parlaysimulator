@@ -31,6 +31,7 @@ const SweetSpots = React.lazy(() => import("./pages/SweetSpots"));
 const Research = React.lazy(() => import("./pages/Research"));
 const MyBets = React.lazy(() => import("./pages/MyBets"));
 const Projections = React.lazy(() => import("./pages/Projections"));
+const Games = React.lazy(() => import("./pages/Games"));
 const VerifyEmail = React.lazy(() => import("./pages/VerifyEmail"));
 const Admin = React.lazy(() => import("./pages/Admin"));
 const Collaborate = React.lazy(() => import("./pages/Collaborate"));
@@ -109,6 +110,7 @@ function AnimatedRoutes() {
               <Route path="/sweet-spots" element={<SweetSpots />} />
               <Route path="/research" element={<AdminGate><Research /></AdminGate>} />
               <Route path="/bets" element={<AdminGate><MyBets /></AdminGate>} />
+              <Route path="/games" element={<AdminGate><Games /></AdminGate>} />
               <Route path="/projections" element={<AdminGate><Projections /></AdminGate>} />
               <Route path="/auth" element={<Navigate to="/" replace />} />
               <Route path="/bot" element={<Navigate to="/" replace />} />
