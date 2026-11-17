@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gradeGamePlay } from "../../supabase/functions/_shared/research/gameBoard.ts";
+import { gradeGamePlay } from "./gameModels";
 
 const base = { home: "Minnesota Timberwolves", away: "Portland Trail Blazers" };
 describe("gradeGamePlay", () => {

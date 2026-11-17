@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { noVig, decimal, paceFatigue, sharpStructure, type GameInput, type TeamGame } from "./gameModels.ts";
+import { noVig, gradeGamePlay, paceFatigue, sharpStructure, type GameInput, type TeamGame } from "./gameModels.ts";
 
 const etDay = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -90,21 +90,6 @@ export async function saveGamePlays(sb: any, day: string, games: any[]) {
   const { error } = await sb.from("research_game_plays").upsert(rows, { onConflict: "game_date,home,away,method,market", ignoreDuplicates: true });
   if (error) throw error;
   return { saved: rows.length };
-}
-
-/** Pure: grade one play from final scores. 1-unit stake. */
-export function gradeGamePlay(p: { market: string; pick: string; odds: number; home: string; away: string }, homeScore: number, awayScore: number) {
-  let status: "won" | "lost" | "push";
-  if (p.market === "total") {
-    const [side, num] = p.pick.split(" "); const line = Number(num); const t = homeScore + awayScore;
-    status = t === line ? "push" : (side === "Over" ? t > line : t < line) ? "won" : "lost";
-  } else {
-    const team = p.pick.replace(/ ML$/, "");
-    const homeWon = homeScore > awayScore;
-    status = (team === p.home) === homeWon ? "won" : "lost";
-  }
-  const profit = status === "won" ? decimal(p.odds) - 1 : status === "lost" ? -1 : 0;
-  return { status, profit_units: Math.round(profit * 1000) / 1000 };
 }
 
 const nick = (n: string) => n.split(" ").pop()!.toLowerCase();

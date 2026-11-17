@@ -110,3 +110,18 @@ export function sharpStructure(g: GameInput): MethodResult {
   } else if (g.sharp.total != null && g.total != null && g.sharp.total !== g.total) notes.push(`Sharp total ${g.sharp.total} differs from ${g.total}; no fair price on this number`);
   return { plays, notes };
 }
+
+/** Pure: grade one play from final scores. 1-unit stake. */
+export function gradeGamePlay(p: { market: string; pick: string; odds: number; home: string; away: string }, homeScore: number, awayScore: number) {
+  let status: "won" | "lost" | "push";
+  if (p.market === "total") {
+    const [side, num] = p.pick.split(" "); const line = Number(num); const t = homeScore + awayScore;
+    status = t === line ? "push" : (side === "Over" ? t > line : t < line) ? "won" : "lost";
+  } else {
+    const team = p.pick.replace(/ ML$/, "");
+    const homeWon = homeScore > awayScore;
+    status = (team === p.home) === homeWon ? "won" : "lost";
+  }
+  const profit = status === "won" ? decimal(p.odds) - 1 : status === "lost" ? -1 : 0;
+  return { status, profit_units: Math.round(profit * 1000) / 1000 };
+}
