@@ -85,6 +85,13 @@
       "when": 1794923766583,
       "tag": "0011_migration",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794949710846,
+      "tag": "0012_research_game_plays",
+      "breakpoints": true
     }
   ]
 }

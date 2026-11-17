@@ -14820,6 +14820,69 @@ export type Database = {
         }
         Relationships: []
       }
+      research_game_plays: {
+        Row: {
+          away: string
+          away_score: number | null
+          book: string | null
+          chance: number | null
+          created_at: string
+          game_date: string
+          home: string
+          home_score: number | null
+          id: string
+          market: string
+          method: string
+          odds: number
+          pick: string
+          profit_units: number | null
+          reason: string | null
+          settled_at: string | null
+          start_time: string | null
+          status: string
+        }
+        Insert: {
+          away: string
+          away_score?: number | null
+          book?: string | null
+          chance?: number | null
+          created_at?: string
+          game_date: string
+          home: string
+          home_score?: number | null
+          id?: string
+          market: string
+          method: string
+          odds: number
+          pick: string
+          profit_units?: number | null
+          reason?: string | null
+          settled_at?: string | null
+          start_time?: string | null
+          status?: string
+        }
+        Update: {
+          away?: string
+          away_score?: number | null
+          book?: string | null
+          chance?: number | null
+          created_at?: string
+          game_date?: string
+          home?: string
+          home_score?: number | null
+          id?: string
+          market?: string
+          method?: string
+          odds?: number
+          pick?: string
+          profit_units?: number | null
+          reason?: string | null
+          settled_at?: string | null
+          start_time?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       research_job_state: {
         Row: {
           job: string

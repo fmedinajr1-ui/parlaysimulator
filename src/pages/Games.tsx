@@ -24,12 +24,46 @@ function Method({ title, r }: { title: string; r: MethodResult }) {
   );
 }
 
+interface Rec { won: number; lost: number; push: number; open: number; units: number }
+interface GameRecord { summary: Record<string, Rec>; recent: { game_date: string; method: string; pick: string; odds: number; status: string; home_score: number | null; away_score: number | null; profit_units: number | null; home: string; away: string }[] }
+const line = (r?: Rec) => (r ? `${r.won}–${r.lost}${r.push ? `–${r.push}` : ""} · ${r.units >= 0 ? "+" : ""}${r.units}u${r.open ? ` · ${r.open} pending` : ""}` : "—");
+
+function RecordPanel({ rec }: { rec: GameRecord }) {
+  const rows = [["pace_fatigue", "Pace & Fatigue"], ["sharp_structure", "Sharp & Structure"]] as const;
+  return (
+    <section className="desk-panel mt-3 p-3">
+      <div className="desk-label">Running record (1 unit per play, saved before tip-off)</div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {rows.map(([k, name]) => (
+          <div key={k} className="desk-panel-flat p-3 desk-mono text-xs">
+            <div className="text-sm font-bold">{name}</div>
+            <div className="mt-1">All: {line(rec.summary[`${k}:all`])}</div>
+            <div>Totals: {line(rec.summary[`${k}:total`])}</div>
+            <div>Moneylines: {line(rec.summary[`${k}:moneyline`])}</div>
+          </div>
+        ))}
+      </div>
+      {rec.recent.length > 0 && (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer text-muted-foreground">Recent results</summary>
+          <ul className="desk-mono mt-1 space-y-0.5">
+            {rec.recent.map((r, i) => (
+              <li key={i}>{r.game_date} · {r.method === "pace_fatigue" ? "P&F" : "Sharp"} · {r.pick} {fmt(r.odds)} · {r.away.split(" ").pop()} {r.away_score ?? "—"} @ {r.home.split(" ").pop()} {r.home_score ?? "—"} · <b>{r.status}</b></li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
 export default function Games() {
+  const [rec, setRec] = useState<GameRecord | null>(null);
   const [games, setGames] = useState<BoardGame[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     supabase.functions.invoke("desk-bets", { body: { action: "game_board", passcode: localStorage.getItem(PASS_KEY) ?? "" } })
-      .then(({ data, error }) => { if (error || data?.error) setErr(data?.error ?? error?.message ?? "Failed"); setGames(data?.games ?? []); })
+      .then(({ data, error }) => { if (error || data?.error) setErr(data?.error ?? error?.message ?? "Failed"); setGames(data?.games ?? []); setRec(data?.record ?? null); })
       .catch((e) => { setErr(String(e)); setGames([]); });
   }, []);
   const count = (k: "paceFatigue" | "sharpStructure") => (games ?? []).reduce((s, g) => s + g[k].plays.length, 0);
@@ -39,9 +73,10 @@ export default function Games() {
       <main className="mx-auto max-w-[1100px] px-3 pb-16 pt-4 sm:px-4">
         <h1 className="desk-display text-xl font-bold">Totals & moneylines: two methods</h1>
         <p className="desk-note mt-1 text-sm">
-          <b>Pace & Fatigue</b>: projects the total from both teams' pace and scoring, takes points off for tired legs (back-to-back, road back-to-back, 3 in 4, 4 in 6), and backs the rested team when the fatigue gap is 15+. <b>Sharp & Structure</b>: takes the sharp book's fair price, adds +4% for home teams and +2% for Unders, skips moneylines on 9.5+ spreads, and needs 2%+ profit. Both skip favorites over 80%. Display only, not recommendations.
+          <b>Pace & Fatigue</b>: projects the total from both teams' pace and scoring, takes points off for tired legs (back-to-back, road back-to-back, 3 in 4, 4 in 6), and backs the rested team when the fatigue gap is 15+. <b>Sharp & Structure</b>: takes the sharp book's fair price, adds +4% for home teams and +2% for Unders, skips moneylines on 9.5+ spreads, and needs 2%+ profit. Both skip favorites over 80%. Plays are saved before tip-off and graded after the games. Display only, not recommendations.
         </p>
         {games && <p className="desk-mono mt-2 text-xs">Plays tonight: Pace & Fatigue {count("paceFatigue")} · Sharp & Structure {count("sharpStructure")}</p>}
+        {rec && <RecordPanel rec={rec} />}
         {err && <p className="mt-3 text-sm text-destructive">{err}</p>}
         {!games && <p className="mt-4 text-sm text-muted-foreground">Loading tonight's games…</p>}
         {games?.length === 0 && !err && <p className="mt-4 text-sm text-muted-foreground">No games left tonight.</p>}

@@ -10,6 +10,7 @@ import { gradeResearchPick } from "../_shared/research/grading.ts";
 import { gradeSkepticalPicks } from "../_shared/research/gradeSkeptical.ts";
 import { snapshotDeskBots } from "../_shared/research/deskSnapshot.ts";
 import { botResearchReport } from "../_shared/research/botSync.ts";
+import { gameBoard, saveGamePlays, gradeGamePlays } from "../_shared/research/gameBoard.ts";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
@@ -246,6 +247,7 @@ Deno.serve(async (req) => {
     await step("gradeSkepticalPicks", () => gradeSkepticalPicks(sb, today));
     await step("gradeMinutes", () => gradeMinutes(sb, today));
     await step("gradeSimLog", () => gradeSimLog(sb, today));
+    await step("gradeGamePlays", () => gradeGamePlays(sb, today));
     await sb.from("research_job_state").upsert({ job: JOB, locked_until: null });
     return new Response(JSON.stringify(report), { headers: { ...cors, "Content-Type": "application/json" } });
   }
@@ -278,6 +280,7 @@ Deno.serve(async (req) => {
   await step("gradeSkepticalPicks", () => gradeSkepticalPicks(sb, today));
   await step("gradeMinutes", () => gradeMinutes(sb, today));
   await step("gradeSimLog", () => gradeSimLog(sb, today));
+  await step("gradeGamePlays", () => gradeGamePlays(sb, today));
   await step("injuries", () => syncInjuries(sb, today));
   await step("lines", () => syncLines(sb, today));
   await step("minutesForecasts", () => snapshotMinutes(sb, today));
@@ -286,6 +289,7 @@ Deno.serve(async (req) => {
     const board = await getJson(`${ESPN}/scoreboard?dates=${today.replaceAll("-", "")}`);
     return snapshotDeskBots(sb, today, board.events ?? []);
   });
+  await step("gamePlays", async () => saveGamePlays(sb, today, (await gameBoard(sb, today)).games));
   await step("accuracyResearch", () => botResearchReport(sb));
 
   let paused = st?.paused_reason ?? null;
