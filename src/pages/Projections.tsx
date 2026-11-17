@@ -7,6 +7,7 @@ import { legKey, readSlip, SLIP_EVENT, toggleLeg } from "@/utils/betSlip";
 import type { StatKey } from "@/utils/nbaBoxScoreMath";
 import { RestBadge } from "@/components/desk/RestBadge";
 import { Button } from "@/components/ui/button";
+import { simulateProp } from "@/utils/propMonteCarlo";
 import { V6_MODEL_VERSION } from "@/utils/minutesValidation";
 
 type Sort = "gap" | "win" | "ev" | "minutes";
@@ -38,7 +39,7 @@ export default function Projections() {
     const list = (trial ? v6BoardEdges : boardEdges)
       .filter((e) => (stat === "all" || e.stat === stat) && (!onlyPicks || e.qualifies))
       .filter((e) => !needle || e.player.toLowerCase().includes(needle) || (e.team ?? "").toLowerCase().includes(needle) || (e.tonight ?? "").toLowerCase().includes(needle))
-      .map((e) => ({ e, m: minFor(e), gapPct: e.line ? (e.median - e.line) / e.line : 0 }));
+      .map((e) => { const m = minFor(e); const sim = simulateProp(byPlayer.get(e.player) ?? [], e.stat, e.line, e.median, m?.minutes ?? null); return { e, m, sim, gapPct: e.line ? (e.median - e.line) / e.line : 0 }; });
     const key: Record<Sort, (r: (typeof list)[number]) => number> = {
       gap: (r) => Math.abs(r.gapPct), win: (r) => r.e.hitRate, ev: (r) => r.e.ev, minutes: (r) => r.m?.minutes ?? 0,
     };
@@ -57,7 +58,7 @@ export default function Projections() {
         {trial && <p className="mt-2 text-xs text-muted-foreground">{V6_MODEL_VERSION} · Experimental, not active recommendations · Minutes accuracy gate still applies.</p>}
         <p className="desk-note mt-1 text-sm">
           Every player with a line tonight: our projected total, projected minutes, and how far the sportsbook line sits from it.
-          <b> PICK</b> = passes every model rule. Minutes are an estimate to explain the projection.
+          <b> PICK</b> = passes every model rule. Minutes are an estimate to explain the projection. <b>Monte Carlo</b> = 2,000 simulated games from his real minutes and per-minute output; range is the low 10% to high 10%. Display only, it does not change picks.
         </p>
         <p className="desk-note mt-1 text-[11px]">
           Rest formula: back-to-back −5% for 32+ minute players (otherwise −3%), 1 day off neutral, 2 days off +1%, 3+ days off +2%.
@@ -87,7 +88,7 @@ export default function Projections() {
         {!loading && !rows.length && <p className="desk-note mt-2 text-sm">No lines posted yet for today. They load with the 8 AM update.</p>}
 
         <ul className="mt-2 flex flex-col gap-2">
-          {rows.slice(0, 300).map(({ e, m, gapPct }) => {
+          {rows.slice(0, 300).map(({ e, m, sim, gapPct }) => {
             const id = `${e.player}|${e.stat}`;
             const over = e.median > e.line;
             const inSlip = slip.has(legKey(e));
@@ -123,6 +124,19 @@ export default function Projections() {
                     {inSlip ? "✓ In slip" : "+ Slip"}
                   </button>
                 </div>
+
+                {sim && (() => {
+                  const simSide = e.side === "over" ? sim.over : 1 - sim.over;
+                  const diff = Math.round((simSide - e.hitRate) * 100);
+                  return (
+                    <div className="desk-mono mt-2 rounded border border-[hsl(var(--desk-line))] px-2 py-1 text-[11px]">
+                      <span className="desk-label mr-1">Monte Carlo</span>
+                      {e.side.toUpperCase()} {Math.round(simSide * 100)}% vs model {Math.round(e.hitRate * 100)}%
+                      {Math.abs(diff) >= 8 && <b className="ml-1 text-[hsl(var(--desk-amber))]">({diff > 0 ? "+" : ""}{diff})</b>}
+                      {" · "}range {sim.p10}–{sim.p90}, typical {sim.p50}
+                    </div>
+                  );
+                })()}
 
                 {e.production && <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-border pt-2 text-xs">
                   <div><dt className="text-muted-foreground">Shot attempts · L5 / L10</dt><dd>{e.production.fgaL5?.toFixed(1) ?? "—"} / {e.production.fgaL10?.toFixed(1) ?? "—"}</dd></div>
