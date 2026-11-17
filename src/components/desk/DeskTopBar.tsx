@@ -39,7 +39,7 @@ export function DeskTopBar({ logs, players, lines, injuries, latest, edges }: Pr
           </div>
         </div>
 
-        <div className="hidden gap-5 lg:flex">
+        <div className={logs > 0 ? "hidden gap-5 lg:flex" : "hidden"}>
           <Stat label="Logs" value={logs.toLocaleString()} />
           <Stat label="Players" value={players.toLocaleString()} />
           <Stat label="Lines today" value={String(lines)} accent />
