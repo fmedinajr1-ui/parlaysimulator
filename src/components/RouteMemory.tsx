@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 const KEY = "last_route_v1";
 const SCROLL_KEY = "last_scroll_v1";
-const REMEMBER = ["/", "/bets", "/research", "/projections"];
+const REMEMBER = ["/", "/bets", "/research", "/projections", "/games"];
 const USER_EVENTS = ["touchstart", "wheel", "keydown", "pointerdown"] as const;
 
 /**
@@ -47,7 +47,11 @@ export function RouteMemory() {
             } else if (++tries > 80) stop();
           }, 150);
           stopRestore = detach;
-        } else scrollPending.current = false;
+        } else if (!(fresh && s && s.y > 0 && loc.pathname === "/" && REMEMBER.includes(s.path))) {
+          // The home-screen icon opens "/" first and another restorer may move us to the
+          // saved page a moment later; keep the scroll restore waiting for that page.
+          scrollPending.current = false;
+        }
       }
       if (REMEMBER.includes(loc.pathname)) localStorage.setItem(KEY, loc.pathname);
     } catch { /* Storage may be disabled on the phone. */ }
