@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useRememberedDeskState } from "@/hooks/useRememberedDeskState";
 import "@/components/desk/desk-tokens.css";
 import { DeskTopBar } from "@/components/desk/DeskTopBar";
 import { STAT_OPTIONS, useResearchData, type EdgePick } from "@/hooks/useResearchData";
@@ -10,17 +11,27 @@ import { Button } from "@/components/ui/button";
 import { simulateProp } from "@/utils/propMonteCarlo";
 import { V6_MODEL_VERSION } from "@/utils/minutesValidation";
 
+// Sims are seeded, so the same inputs always give the same answer; cache them so
+// coming back to the page or typing in search doesn't redo 2,000 runs per prop.
+const simCache = new Map<string, ReturnType<typeof simulateProp>>();
+function cachedSim(games: Parameters<typeof simulateProp>[0], e: EdgePick, minutes: number | null) {
+  const k = `${e.player}|${e.stat}|${e.line}|${e.median}|${minutes}|${games.length}|${games[0]?.game_date ?? ""}`;
+  let v = simCache.get(k);
+  if (v === undefined) { v = simulateProp(games, e.stat, e.line, e.median, minutes); simCache.set(k, v); }
+  return v;
+}
+
 type Sort = "gap" | "win" | "ev" | "minutes";
 const short = (s: StatKey) => STAT_OPTIONS.find((o) => o.key === s)?.short ?? s;
 const fmtOdds = (o: number) => (o > 0 ? `+${o}` : String(o));
 
 export default function Projections() {
   const { logs, byPlayer, propLines, injuries, today, edges, boardEdges, v6BoardEdges, loading } = useResearchData();
-  const [trial, setTrial] = useState(false);
-  const [stat, setStat] = useState<StatKey | "all">("all");
-  const [sort, setSort] = useState<Sort>("gap");
-  const [onlyPicks, setOnlyPicks] = useState(false);
-  const [q, setQ] = useState("");
+  const [trial, setTrial] = useRememberedDeskState("proj-trial", false);
+  const [stat, setStat] = useRememberedDeskState<StatKey | "all">("proj-stat", "all");
+  const [sort, setSort] = useRememberedDeskState<Sort>("proj-sort", "gap");
+  const [onlyPicks, setOnlyPicks] = useRememberedDeskState("proj-picks", false);
+  const [q, setQ] = useRememberedDeskState("proj-search", "");
   const [open, setOpen] = useState<string | null>(null);
   const [slip, setSlip] = useState(() => new Set(readSlip().map(legKey)));
   useEffect(() => {
@@ -39,7 +50,7 @@ export default function Projections() {
     const list = (trial ? v6BoardEdges : boardEdges)
       .filter((e) => (stat === "all" || e.stat === stat) && (!onlyPicks || e.qualifies))
       .filter((e) => !needle || e.player.toLowerCase().includes(needle) || (e.team ?? "").toLowerCase().includes(needle) || (e.tonight ?? "").toLowerCase().includes(needle))
-      .map((e) => { const m = minFor(e); const sim = simulateProp(byPlayer.get(e.player) ?? [], e.stat, e.line, e.median, m?.minutes ?? null); return { e, m, sim, gapPct: e.line ? (e.median - e.line) / e.line : 0 }; });
+      .map((e) => { const m = minFor(e); const sim = cachedSim(byPlayer.get(e.player) ?? [], e, m?.minutes ?? null); return { e, m, sim, gapPct: e.line ? (e.median - e.line) / e.line : 0 }; });
     const key: Record<Sort, (r: (typeof list)[number]) => number> = {
       gap: (r) => Math.abs(r.gapPct), win: (r) => r.e.hitRate, ev: (r) => r.e.ev, minutes: (r) => r.m?.minutes ?? 0,
     };

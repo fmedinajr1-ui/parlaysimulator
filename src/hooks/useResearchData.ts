@@ -74,12 +74,28 @@ export { computeEdges, rosterResolver } from "../../supabase/functions/_shared/r
 export type { EdgePick, EdgeInputs } from "../../supabase/functions/_shared/research/deskEdges";
 import { computeEdges, rosterResolver, type RawLine, implied, juice } from "../../supabase/functions/_shared/research/deskEdges";
 
+const EXTRAS_KEY = "research-extras-v1";
+type Extras = { date: string; lines: RawLine[]; injuries: [string, string][] };
+let memoryExtras: Extras | null = null;
+function readExtras(date: string): Extras | null {
+  if (memoryExtras?.date === date) return memoryExtras;
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXTRAS_KEY) ?? "null") as Extras | null;
+    if (saved?.date === date && Array.isArray(saved.lines)) return (memoryExtras = saved);
+  } catch { /* ignore */ }
+  return null;
+}
+function writeExtras(x: Extras) {
+  memoryExtras = x;
+  try { localStorage.setItem(EXTRAS_KEY, JSON.stringify(x)); } catch { /* storage full: memory copy still helps */ }
+}
+
 export function useResearchData() {
   const [logs, setLogs] = useState<GameLog[]>(memoryLogs ?? []);
   const [loading, setLoading] = useState(!memoryLogs);
   const [err, setErr] = useState<string | null>(null);
-  const [rawLines, setRawLines] = useState<RawLine[]>([]);
-  const [injuries, setInjuries] = useState<Map<string, string>>(new Map());
+  const [rawLines, setRawLines] = useState<RawLine[]>(() => readExtras(etToday())?.lines ?? []);
+  const [injuries, setInjuries] = useState<Map<string, string>>(() => new Map(readExtras(etToday())?.injuries ?? []));
   const [today, setToday] = useState(etToday);
   useEffect(() => {
     const timer = window.setInterval(() => setToday(etToday()), 60_000);
@@ -125,9 +141,11 @@ export function useResearchData() {
             .eq("game_date", today)
             .limit(1000),
         ]);
-        if (alive) setRawLines((pl ?? []) as RawLine[]);
-        if (alive)
-          setInjuries(new Map((inj ?? []).map((i) => [String(i.player_name).toLowerCase(), String(i.status)])));
+        const lines = (pl ?? []) as RawLine[];
+        const injPairs = (inj ?? []).map((i) => [String(i.player_name).toLowerCase(), String(i.status)] as [string, string]);
+        writeExtras({ date: today, lines, injuries: injPairs });
+        if (alive) setRawLines(lines);
+        if (alive) setInjuries(new Map(injPairs));
       } catch (e) {
         console.error("research extras failed", e);
       }
