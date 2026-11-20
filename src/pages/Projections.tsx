@@ -10,6 +10,9 @@ import { RestBadge } from "@/components/desk/RestBadge";
 import { Button } from "@/components/ui/button";
 import { simulateProp } from "@/utils/propMonteCarlo";
 import { V6_MODEL_VERSION } from "@/utils/minutesValidation";
+import { ppVerdict, PP_HURDLES, type PPLine } from "@/utils/prizePicks";
+import { supabase } from "@/integrations/supabase/client";
+import { PASS_KEY } from "@/components/AdminGate";
 
 // Sims are seeded, so the same inputs always give the same answer; cache them so
 // coming back to the page or typing in search doesn't redo 2,000 runs per prop.
@@ -33,6 +36,18 @@ export default function Projections() {
   const [onlyPicks, setOnlyPicks] = useRememberedDeskState("proj-picks", false);
   const [q, setQ] = useRememberedDeskState("proj-search", "");
   const [open, setOpen] = useState<string | null>(null);
+  const [pp, setPp] = useState<Map<string, number> | null>(null);
+  const [ppBlocked, setPpBlocked] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.functions.invoke("desk-bets", { body: { action: "prizepicks_board", passcode: localStorage.getItem(PASS_KEY) ?? "" } });
+        const lines = (data?.lines ?? []) as PPLine[];
+        setPpBlocked(!!data?.blocked);
+        setPp(new Map(lines.map((l) => [`${l.player.toLowerCase()}|${l.stat}`, l.line])));
+      } catch { setPpBlocked(true); }
+    })();
+  }, []);
   const [slip, setSlip] = useState(() => new Set(readSlip().map(legKey)));
   useEffect(() => {
     const f = () => setSlip(new Set(readSlip().map(legKey)));
@@ -98,6 +113,8 @@ export default function Projections() {
         <p className="desk-label mt-3">{loading ? "Loading…" : `${rows.length} props`}</p>
         {!loading && !rows.length && <p className="desk-note mt-2 text-sm">No lines posted yet for today. They load with the 8 AM update.</p>}
 
+        {ppBlocked && <p className="desk-note mt-2">PrizePicks didn't share its board right now, so PrizePicks lines aren't shown. Numbers below use sportsbook lines.</p>}
+        {pp && !ppBlocked && <p className="desk-note mt-2">PrizePicks check uses the model alone (no sportsbook price). A leg needs over 57.7% for a 2-pick Power and over 54.3% for a 5/6-pick Flex to make money.</p>}
         <ul className="mt-2 flex flex-col gap-2">
           {rows.slice(0, 300).map(({ e, m, sim, gapPct }) => {
             const id = `${e.player}|${e.stat}`;
@@ -145,6 +162,26 @@ export default function Projections() {
                       {e.side.toUpperCase()} {Math.round(simSide * 100)}% vs model {Math.round(e.hitRate * 100)}%
                       {Math.abs(diff) >= 8 && <b className="ml-1 text-[hsl(var(--desk-amber))]">({diff > 0 ? "+" : ""}{diff})</b>}
                       {" · "}range {sim.p10}–{sim.p90}, typical {sim.p50}
+                    </div>
+                  );
+                })()}
+
+                {(() => {
+                  const ppLine = pp?.get(`${e.player.toLowerCase()}|${e.stat}`);
+                  if (ppLine == null) return null;
+                  const games = byPlayer.get(e.player) ?? [];
+                  const ppSim = cachedSim(games, { ...e, line: ppLine }, m?.minutes ?? null);
+                  if (!ppSim) return null;
+                  const side = e.median > ppLine ? "over" : "under";
+                  const chance = side === "over" ? ppSim.over : 1 - ppSim.over;
+                  const v = ppVerdict(chance);
+                  const moved = ppLine !== e.line;
+                  return (
+                    <div className="desk-mono mt-2 rounded border border-[hsl(var(--desk-line))] px-2 py-1 text-[11px]">
+                      <span className="desk-label mr-1">PrizePicks</span>
+                      line {ppLine}{moved && <b className="ml-1 text-[hsl(var(--desk-amber))]">(book {e.line})</b>}
+                      {" · "}{side.toUpperCase()} {Math.round(chance * 100)}% (model only, no book price)
+                      {" · "}<b className={v === "below hurdle" ? "text-[hsl(var(--desk-down,0_80%_62%))]" : "text-[hsl(var(--desk-up,142_70%_50%))]"}>{v === "beats power" ? `clears 2-pick ${Math.round(PP_HURDLES.power2 * 1000) / 10}%` : v === "beats flex" ? `clears flex ${Math.round(PP_HURDLES.flex5 * 1000) / 10}% only` : "below break-even — skip"}</b>
                     </div>
                   );
                 })()}

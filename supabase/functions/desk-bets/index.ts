@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { parsePrizePicks } from "../_shared/research/prizePicks.ts";
 import { z } from "npm:zod@3";
 import { minutesAccuracy, MINUTES_FORECAST_VERSION, V6_MODEL_VERSION } from "../_shared/research/minutesValidation.ts";
 import { skepticalHistory, verifiedSkepticalMarket } from "../_shared/research/skeptical.ts";
@@ -33,6 +34,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete"), passcode: z.string(), id: z.string().uuid() }),
   z.object({ action: z.literal("live"), passcode: z.string() }),
   z.object({ action: z.literal("game_board"), passcode: z.string() }),
+  z.object({ action: z.literal("prizepicks_board"), passcode: z.string() }),
   z.object({ action: z.literal("log_picks"), passcode: z.string(), picks: z.array(z.object({
     game_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), player_name: z.string().min(1).max(80),
     stat: z.string().max(20), side: z.enum(["over", "under"]), line: z.number(), odds: z.number().int().nullable(),
@@ -127,6 +129,15 @@ Deno.serve(async (req) => {
   }
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const day = etDay(new Date());
+  if (b.action === "prizepicks_board") {
+    // NBA league id 7 on PrizePicks; they sometimes block servers, so report that instead of failing.
+    const r = await fetch("https://api.prizepicks.com/projections?league_id=7&per_page=1000&single_stat=true", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36", Accept: "application/json" },
+    }).catch(() => null);
+    if (!r || !r.ok) return json({ lines: [], blocked: true, status: r?.status ?? 0 });
+    const body = await r.json().catch(() => ({}));
+    return json({ lines: parsePrizePicks(body), blocked: false });
+  }
   if (b.action === "game_board") {
     const board = await gameBoard(sb, day);
     // Backup save: first pregame snapshot per game is kept.
