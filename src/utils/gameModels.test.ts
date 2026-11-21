@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fatigue, paceFatigue, sharpStructure, noVig, type GameInput, type TeamGame } from "./gameModels";
+import { fatigue, paceFatigue, sharpStructure, noVig, normCdf, type GameInput, type TeamGame } from "./gameModels";
 
 const games = (dates: string[], pts = 115, oppPts = 110, poss = 100): TeamGame[] =>
   dates.map((date) => ({ date, pts, oppPts, poss, minutes: 240, home: true }));
@@ -32,4 +32,27 @@ describe("game models", () => {
     expect(sharpStructure(base()).plays.some((p) => p.market === "total")).toBe(false);
   });
   it("no-vig splits -110/-110 to 50%", () => { expect(noVig(-110, -110)).toBeCloseTo(0.5); });
+});
+
+describe("pace & fatigue totals need a real chance", () => {
+  const swing = (dates: string[]) => dates.map((date, i) => ({ date, pts: 115 + (i % 2 ? 10 : -10), oppPts: 110, poss: 100, minutes: 240, home: true }));
+  it("a 3-point gap alone no longer makes an Under play", () => {
+    // model total 225 vs line 228: old rule bet Under; now ~53% after shrink + market blend
+    const r = paceFatigue(base({ total: 228, homeGames: swing(["2026-11-08", "2026-11-10", "2026-11-12", "2026-11-14"]), awayGames: swing(["2026-11-08", "2026-11-10", "2026-11-12", "2026-11-14"]) }));
+    expect(r.plays.some((p) => p.market === "total")).toBe(false);
+  });
+  it("a big gap makes a play with a stated chance of at least 55%", () => {
+    const r = paceFatigue(base({ total: 245 }));
+    const t = r.plays.find((p) => p.market === "total");
+    expect(t?.pick).toBe("Under 245");
+    expect(t!.chance!).toBeGreaterThanOrEqual(0.55);
+  });
+  it("Over still needs fast pace", () => {
+    expect(paceFatigue(base({ total: 205 })).plays.some((p) => p.market === "total")).toBe(false);
+  });
+  it("fatigue moneyline carries a chance", () => {
+    const r = paceFatigue(base({ awayGames: games(["2026-11-14", "2026-11-15", "2026-11-16"]) }));
+    expect(r.plays.find((p) => p.market === "moneyline")?.chance).toBeGreaterThan(0.55);
+  });
+  it("normal cdf is 50% at zero", () => { expect(normCdf(0)).toBeCloseTo(0.5, 3); });
 });

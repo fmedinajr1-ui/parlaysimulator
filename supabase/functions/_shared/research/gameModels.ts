@@ -52,6 +52,24 @@ export function modelTotal(g: GameInput): number | null {
   return homePts + awayPts;
 }
 
+export const TOTAL_SHRINK = 0.5;
+export const MIN_TOTAL_CHANCE = 0.55;
+const anyB2B = (a: { why: string[] }, b: { why: string[] }) => a.why.includes("back-to-back") || b.why.includes("back-to-back");
+/** Standard normal CDF (Abramowitz-Stegun). */
+export function normCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp((-x * x) / 2);
+  const q = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x >= 0 ? 1 - q : q;
+}
+/** Game-to-game swing of both teams' recent game totals, floored at 12 points. */
+export function totalSpread(g: GameInput): number {
+  const t = [...recent(g.homeGames), ...recent(g.awayGames)].map((x) => x.pts + x.oppPts);
+  if (t.length < 4) return 18;
+  const m = avg(t);
+  return Math.max(12, Math.sqrt(avg(t.map((v) => (v - m) ** 2))));
+}
+
 /** Method A: pace and schedule fatigue. */
 export function paceFatigue(g: GameInput): MethodResult {
   const notes: string[] = []; const plays: Play[] = [];
@@ -64,18 +82,32 @@ export function paceFatigue(g: GameInput): MethodResult {
   notes.push(`Pace ${combined.toFixed(1)} (${combined >= 102 ? "fast" : combined <= 98 ? "slow" : "neutral"}) · model total ${total.toFixed(1)}`);
   notes.push(`Fatigue: ${g.home} ${fh.score}${fh.why.length ? ` (${fh.why.join(", ")})` : ""}, ${g.away} ${fa.score}${fa.why.length ? ` (${fa.why.join(", ")})` : ""}`);
   if (g.total != null && g.over && g.under) {
-    const gap = total - g.total;
-    const anyB2B = fh.why.includes("back-to-back") || fa.why.includes("back-to-back");
-    if (gap >= 3 && combined >= 102 && !anyB2B) plays.push({ market: "total", pick: `Over ${g.total}`, ...g.over, chance: null, reason: `Fast pace, nobody tired, model ${gap.toFixed(1)} over the line` });
-    else if (-gap >= 3 || (Math.max(fh.score, fa.score) >= 25 && -gap >= 1)) plays.push({ market: "total", pick: `Under ${g.total}`, ...g.under, chance: null, reason: `Model ${(-gap).toFixed(1)} under the line${Math.max(fh.score, fa.score) >= 25 ? ", tired legs" : ""}` });
+    // Real win chance: shrink the projection halfway to the line (pace models overreach),
+    // turn the gap into a chance with the teams' own game-to-game total swings,
+    // then blend 50/50 with the no-vig book price. Pick only with a real chance and profit.
+    const sd = totalSpread(g);
+    const proj = g.total + TOTAL_SHRINK * (total - g.total);
+    const pModel = normCdf((proj - g.total) / sd);
+    const pOver = 0.5 * pModel + 0.5 * noVig(g.over.odds, g.under.odds);
+    const evO = pOver * decimal(g.over.odds) - 1, evU = (1 - pOver) * decimal(g.under.odds) - 1;
+    const over = evO > evU, p = over ? pOver : 1 - pOver, ev = over ? evO : evU;
+    const tired = Math.max(fh.score, fa.score) >= 25;
+    notes.push(`Total chance ${(pOver * 100).toFixed(0)}% Over (swing ±${sd.toFixed(0)} pts)`);
+    if (over && (combined < 102 || anyB2B(fh, fa))) notes.push("Over skipped: needs fast pace and nobody on a back-to-back");
+    else if (p < MIN_TOTAL_CHANCE || ev < MIN_EV) notes.push(`No total play: best side ${(p * 100).toFixed(0)}%, needs ${MIN_TOTAL_CHANCE * 100}% and +${MIN_EV * 100}% profit`);
+    else plays.push({ market: "total", pick: `${over ? "Over" : "Under"} ${g.total}`, ...(over ? g.over : g.under), chance: p, reason: `Model ${proj.toFixed(1)} vs line ${g.total} · ${(p * 100).toFixed(0)}% · +${(ev * 100).toFixed(1)}% profit${!over && tired ? ", tired legs" : ""}` });
   }
   const diff = fa.score - fh.score;
   if (Math.abs(diff) >= 15 && g.homeML && g.awayML) {
     const homeRested = diff > 0;
     const price = homeRested ? g.homeML : g.awayML;
     const team = homeRested ? g.home : g.away;
+    const market = homeRested ? noVig(g.homeML.odds, g.awayML.odds) : noVig(g.awayML.odds, g.homeML.odds);
+    const p = Math.min(0.97, market + Math.min(0.05, Math.abs(diff) / 600));
+    const ev = p * decimal(price.odds) - 1;
     if (implied(price.odds) > 0.8) notes.push(`${team} is rested but priced over 80%, juice trap, skipped`);
-    else plays.push({ market: "moneyline", pick: `${team} ML`, ...price, chance: null, reason: `${Math.abs(diff)}-point fatigue edge${Math.abs(diff) >= 30 ? " (strong)" : ""}` });
+    else if (ev < MIN_EV) notes.push(`${team} rest edge too small for the price (${(p * 100).toFixed(0)}%)`);
+    else plays.push({ market: "moneyline", pick: `${team} ML`, ...price, chance: p, reason: `${Math.abs(diff)}-point fatigue edge · ${(p * 100).toFixed(0)}% vs book ${(implied(price.odds) * 100).toFixed(0)}%` });
   }
   return { plays, notes };
 }
