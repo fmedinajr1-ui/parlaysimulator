@@ -1,5 +1,10 @@
 # Minutes model rollout
 
+# Better pick decisions
+- [x] Add a cautious, platform-specific decision review over all projected props, with exact-line checks, season/role risks, and an explicit pass outcome.
+- [x] Show the review on the desk without changing model probabilities, saved picks, or placing bets. PrizePicks has an exact-line manual fallback; Polymarket remains explicitly unconnected.
+- [x] Test decision rules and verify phone/desktop review interactions: real unlocked 368-prop scan, blocked-feed notice, manual PrizePicks check, reasons, player review, and no mobile overflow or runtime errors.
+
 # Bot synchronization and midnight update
 - [x] Synchronize research and Oversight records and refresh signals; scheduled snapshots and targets use shared deterministic desk math and verified immutable shelf rows.
 - [x] Move the single daily update to midnight Eastern with daylight-saving handling; run November 9 catch-up (108 lines, 9 pregame skeptical records, 3 matching simulated bot targets). AI Top Plays remains paused for insufficient credits.

@@ -8,6 +8,7 @@ import { useResearchData } from "@/hooks/useResearchData";
 import { useRememberedDeskState } from "@/hooks/useRememberedDeskState";
 import { DeskTopBar } from "@/components/desk/DeskTopBar";
 import { EdgeCards } from "@/components/desk/EdgeCards";
+import { DecisionReviewPanel } from "@/components/desk/DecisionReviewPanel";
 import { GameCoverageBoard } from "@/components/desk/GameCoverage";
 import { ResearchTerminal } from "@/components/desk/ResearchTerminal";
 import { SeasonVenueBoard } from "@/components/desk/SeasonVenueBoard";
@@ -21,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Bot, CheckCheck, ShieldAlert, LayoutGrid, Users, Search, ChartNoAxesCombined, ChevronDown } from "lucide-react";
 
 export default function Desk() {
-  const { logs, loading, err, byPlayer, propLines, injuries, today, edges, allEdges, v6Edges, boardEdges, gameCoverage, trendFor } = useResearchData();
+  const { logs, loading, err, byPlayer, propLines, lineOdds, injuries, today, edges, allEdges, v6Edges, boardEdges, gameCoverage, trendFor } = useResearchData();
   const [focus, setFocus] = useRememberedDeskState<string | null>("focus", null);
   const [savedView, setView] = useRememberedDeskState<"picks" | "games" | "research" | "results">("view", "picks");
   const view = ["picks", "games", "research", "results"].includes(savedView) ? savedView : "picks";
@@ -143,6 +144,7 @@ export default function Desk() {
         {view === "picks" && <>
           {reviewed && <div role="status" className="mb-4 border-l-2 border-primary bg-secondary px-3 py-3 text-sm">Review complete: {audit.clear.length} without disagreement flags, {audit.flagged.length} skeptical. No pick is guaranteed.</div>}
           {err && <p role="alert" className="mb-3 text-sm text-destructive">{err}</p>}
+          <DecisionReviewPanel board={boardEdges} byPlayer={byPlayer} lineOdds={lineOdds} injuries={injuries} today={today} loading={loading} onPick={reviewPlayer} />
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-lg font-semibold">Main recommendations</h2><span className="text-xs text-muted-foreground">{MODEL_VERSION} · Up to 4 without review flags</span></div>
           {loading ? <p className="py-6 text-sm text-muted-foreground">Reviewing tonight’s props…</p> : <EdgeCards edges={audit.clear.slice(0, 4)} onPick={reviewPlayer} />}
           <section className="mt-5 border-y border-border py-3">

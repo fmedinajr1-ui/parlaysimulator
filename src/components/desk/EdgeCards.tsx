@@ -40,7 +40,7 @@ export function EdgeCards({ edges, onPick, skeptical = false, showSlip = true }:
           >
             <div className={`mb-3 flex items-center gap-1.5 border-b border-border pb-2 font-mono text-[10px] font-semibold ${skeptical ? "text-destructive" : "text-primary"}`}>
               {skeptical ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}
-              {skeptical ? "SKEPTICAL" : "PASSED STRESS TEST"}
+              {skeptical ? "SKEPTICAL" : "NO CURRENT REVIEW FLAGS"}
             </div>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
